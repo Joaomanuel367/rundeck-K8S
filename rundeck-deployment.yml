@@ -1,0 +1,113 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: rundeck-storage
+provisioner: kubernetes.io-no-provisioner
+reclaimPolicy: Retain
+mountOptions:
+  - debug
+volumeBindingMode: Immediate
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rundeck-home-pv
+spec:
+  storageClassName: rundeck-storage
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteMany
+  local:
+    path: /tmp/rundeck_home
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/os
+          operator: In
+          values:
+          - linux
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rundeck-home-pvc
+spec:
+  storageClassName: rundeck-storage
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rudeckpro-nginx
+  annotations:
+    nginx.ingres.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-name: "route"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "172800"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: localhost
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: rundeck
+            port:
+              number: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rundeck
+spec:
+  type: LoadBalancer
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 4440
+  selector:
+    app: rundeck
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rundeck
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rundeck
+  template:
+    metadata:
+      labels:
+        app: rundeck
+    spec:
+      containers:
+      - name: rundeck
+        image: rundeck/rundeck:3.4.10
+        ports:
+        - containerPort: 4440
+       # env:
+        #- name: RUNDECK_GRAILS_URL
+         # value: "http://localhost:8080"
+        volumeMounts:
+            - name: rundeck-home-pv
+              mountPath: /home/rundeck/server/data
+            - name: dockersock
+              mountPath: "/var/run/docker.sock" 
+      volumes:
+        - name: rundeck-home-pv
+          persistentVolumeClaim:
+            claimName: rundeck-home-pvc
+        - name: dockersock
+          hostPath:
+            path: /var/run/docker.sock
